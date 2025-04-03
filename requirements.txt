@@ -1,0 +1,21 @@
+fastapi  # FastAPI for exposing REST endpoints
+uvicorn  # ASGI server to run FastAPI app (required with FastAPI)
+pandas
+google-cloud-bigquery
+python-dotenv
+langchain
+langchain-openai
+langchain-deepseek
+langchain-groq 
+langchain-huggingface
+langchain-core
+faiss-cpu
+langfuse
+langchain-community
+google-cloud-bigquery-storage
+google-auth
+sentence-transformers  # For HuggingFace embeddings like all-MiniLM-L6-v2
+nltk==3.8.1  # For BLEU score calculation during evaluation
+rouge==1.0.1  # For ROUGE score calculation during evaluation
+pytest==7.4.0  # For testing pipeline components
+asyncio
