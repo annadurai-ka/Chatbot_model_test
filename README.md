@@ -1,200 +1,254 @@
-# SellerCentral-ChatBot-System
+Thanks! I’ll review your GitHub repo and existing README at https://github.com/aichatbot07/SellerCenteral-ChatBot-System.git, and generate a complete, submission-ready README file. It will include clear markdown formatting, code blocks, setup steps, curl examples, CI/CD details, and monitoring instructions—ready to paste into your repo.
+
+# Seller Central AI Chatbot System (Model Deployment)
 
 ## Project Overview
 
-SellerCentral-ChatBot-System is a cloud-based conversational chatbot designed to assist e-commerce sellers with common queries and tasks. It provides an interactive question-answering service through a web API endpoint, allowing sellers to get instant support. The chatbot is deployed on **Google Cloud Platform (GCP)** using **Cloud Run**, which means it runs as a serverless containerized application. This design allows the chatbot to scale automatically based on demand without requiring manual server management ([Cloud Run | xMatters](https://www.xmatters.com/integration/google-cloud-run#:~:text=Google%20Cloud%20Run%20is%20a,almost%20instantaneously%20depending%20on%20traffic)). The project emphasizes *model deployment and monitoring* rather than model training – in fact, no model training or retraining is performed as part of this system. Instead, a pre-built or pre-trained model is integrated into the application and served to users. 
+The **Seller Central AI Chatbot** is an intelligent assistant designed to help Amazon sellers analyze product reviews and metadata, and answer seller-related queries. It leverages natural language processing and retrieval-based techniques to provide insightful responses for sellers. Key capabilities of the chatbot include:
 
-Key features of the SellerCentral-ChatBot-System include:
+- **Data-Driven Answers:** Fetches product **reviews and metadata** from a Google BigQuery database to ground its answers in real customer feedback.
+- **Vector Similarity Search:** Converts reviews into embeddings using HuggingFace transformers ([GitHub - aichatbot07/SellerCenteral-ChatBot-System](https://github.com/aichatbot07/SellerCenteral-ChatBot-System#:~:text=,HuggingFace%20Transformers%20for%20embedding%20generation)) and indexes them with **FAISS** for efficient similarity search. This allows the bot to retrieve relevant snippets when a question is asked.
+- **Conversational QA Chain:** Uses **LangChain** ([GitHub - aichatbot07/SellerCenteral-ChatBot-System](https://github.com/aichatbot07/SellerCenteral-ChatBot-System#:~:text=,HuggingFace%20Transformers%20for%20embedding%20generation)) to build a conversational Question-Answering chain. The bot combines the retrieved review data with a language model to generate an answer. It can handle follow-up questions by maintaining context (conversation history) in memory.
+- **Scalable Deployment:** Containerized as a FastAPI application (served via Uvicorn) for easy deployment on cloud infrastructure. The system is designed to run on Google Cloud Run for scalability and managed hosting.
+- **Evaluation and MLOps:** Includes scripts for evaluating retrieval quality (e.g. Precision@k, Recall@k) and answer quality (e.g. BLEU, ROUGE-L) to monitor performance. An offline data pipeline (using Apache Airflow and DVC for data versioning) is provided to ingest and preprocess data into BigQuery, ensuring the chatbot's knowledge base stays up-to-date.
 
-- **Stateless Chatbot API**: The chatbot logic (e.g., a machine learning model or rule-based system) is encapsulated in a container that responds to HTTP requests. This makes it easy to query the chatbot from any client (web, mobile, etc.) via simple HTTP calls.
-- **Cloud Deployment**: By leveraging GCP Cloud Run, the chatbot benefits from high availability and automatic scaling. Cloud Run manages the underlying infrastructure, scaling the container instances up or down (even to zero) based on incoming traffic, which optimizes cost and performance ([Cloud Run | xMatters](https://www.xmatters.com/integration/google-cloud-run#:~:text=Google%20Cloud%20Run%20is%20a,almost%20instantaneously%20depending%20on%20traffic)).
-- **Continuous Deployment**: The project uses a CI/CD pipeline with GitHub Actions to automatically build and deploy new versions of the chatbot. Every code update can be seamlessly rolled out to Cloud Run, ensuring that the live service is always up-to-date.
-- **Monitoring & Logging**: The system implements basic model monitoring through logging. Each time the chatbot is started or handles a conversation, and whenever an error occurs, the event is logged. These logs are exported to **BigQuery** for analysis. By querying the logs, one can track metrics such as *how often the chatbot is invoked* and *how many errors occur over time*. This provides insights into usage patterns and system reliability.
+In summary, this project demonstrates an end-to-end solution for an AI-powered chatbot in the Amazon Seller Central context – from data ingestion and model logic to cloud deployment and continuous integration. The following sections detail the cloud architecture, deployment process, CI/CD pipeline, monitoring setup, local development, and the requirements for a video demonstration of the deployed system.
 
-In summary, SellerCentral-ChatBot-System is a **serverless chatbot application** with an emphasis on reliable deployment and monitoring. It is suitable for scenarios where an AI chatbot assists users (in this case, sellers) without the overhead of managing infrastructure or continuously retraining models.
+## Deployment Architecture (Cloud Run + GCP + BigQuery + GitHub Actions)
 
-## Deployment Architecture
+The **deployment architecture** utilizes several Google Cloud Platform (GCP) services alongside our application code and CI/CD tools. The main components are:
 
-The deployment architecture of the SellerCentral-ChatBot-System comprises several GCP services and integration points, as shown below:
+- **Google Cloud Run:** The chatbot is deployed as a containerized web service on Cloud Run. Cloud Run provides a fully managed serverless environment to run the Docker container. It auto-scales the service based on incoming requests and abstracts away server management. The FastAPI app runs on port 8080 inside the container, and Cloud Run routes HTTPS requests to the `/chat/` endpoint of the API.
+- **Google BigQuery:** BigQuery ([GitHub - aichatbot07/SellerCenteral-ChatBot-System](https://github.com/aichatbot07/SellerCenteral-ChatBot-System#:~:text=,HuggingFace%20Transformers%20for%20embedding%20generation)) serves as the datastore for the chatbot's knowledge base. Product review data and product metadata are stored in BigQuery tables. At runtime, the application uses the BigQuery Python client to fetch relevant reviews (for a given ASIN product ID) which are then processed into the FAISS index for retrieval. BigQuery enables handling large datasets of reviews with fast SQL queries.
+- **Secret Manager & Config**: Sensitive credentials and API keys are managed securely. The deployment uses GCP's Secret Manager to store keys (such as HuggingFace tokens, OpenAI API keys, etc.) and a GCP Service Account JSON for BigQuery access. At deployment, these secrets are injected into the Cloud Run service as environment variables. This avoids hard-coding secrets in the code. The application reads configuration (like `HF_TOKEN`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, etc.) from environment variables via a config loader.
+- **GCP Service Account:** The Cloud Run service runs as a dedicated GCP service account with the necessary IAM roles. This service account is granted access to BigQuery (e.g. **BigQuery Data Viewer** on the dataset) and access to Secret Manager secrets (e.g. **Secret Manager Secret Accessor** role). This allows the running application to query BigQuery and retrieve secrets at runtime using Google-provided credentials, without needing to embed a credentials file. (In this project, the service account used is the default Compute Service Account of the project, which was explicitly specified during deployment.)
+- **GitHub Actions (CI/CD):** Automated deployment is set up via a GitHub Actions workflow. On each push to the repository's main branch, the workflow builds the Docker image, pushes it to Google Container Registry, and deploys the new image to Cloud Run. The workflow uses the Google Cloud CLI (`gcloud`) under the hood to handle the build and deployment, as described in the CI/CD section below.
+- **Logging and Monitoring:** Cloud Run integrates with **Cloud Logging** by default, so all application logs (including the chatbot’s structured logs and any BigQuery query logs) are captured. We also leverage **Cloud Monitoring** for metrics like request counts, latency, and errors. Optionally, logs can be exported from Cloud Logging to BigQuery for advanced analysis or auditing. This integration allows tracking of chatbot usage and performance over time using SQL queries in BigQuery or dashboards in Cloud Monitoring.
 
-- **Google Cloud Run (Service)** – Cloud Run hosts the chatbot application in a Docker container. It is a fully managed, serverless platform for running stateless containers triggered by web requests ([Cloud Run | xMatters](https://www.xmatters.com/integration/google-cloud-run#:~:text=Google%20Cloud%20Run%20is%20a,almost%20instantaneously%20depending%20on%20traffic)). The chatbot container is deployed to Cloud Run, allowing it to automatically scale with incoming traffic and scale down when idle. Cloud Run abstracts away server management, so we don't worry about VMs or Kubernetes clusters. The service is typically configured to allow public (unauthenticated) access, so that users can directly send requests to the chatbot’s HTTP endpoint. There is no separate model training component in the architecture; the model is loaded and served within this runtime container.
+**Data Flow & Interactions:** When a user (or client application) sends a question to the chatbot’s API, the request hits the Cloud Run service (HTTPS endpoint). The FastAPI app parses the request JSON payload (which contains an `asin` and a `question`). The chatbot logic then:
 
-- **GitHub Actions (CI/CD Pipeline)** – The code repository (for example, on GitHub) is linked to an automated pipeline using GitHub Actions. Whenever new code is pushed to the repository (e.g., merged into the main branch), the CI/CD workflow triggers. The pipeline builds the Docker image for the chatbot, runs tests (if any), pushes the image to a container registry, and then deploys the new image to Cloud Run ([From Code to Cloud: GitHub Actions for Cloud Run Deployment | by Azeez | Medium](https://azeezz.medium.com/from-code-to-cloud-github-actions-for-cloud-run-deployment-dc1304573642#:~:text=Github%20Actions%20is%20a%20continuous,with%20a%20Service%20Account%20Key)) ([From Code to Cloud: GitHub Actions for Cloud Run Deployment | by Azeez | Medium](https://azeezz.medium.com/from-code-to-cloud-github-actions-for-cloud-run-deployment-dc1304573642#:~:text=machine%20,on%20the%20cloud%20run%20service)). This ensures continuous integration and deployment: any update to the chatbot’s code can be quickly rolled out to production without manual intervention. The GitHub Actions workflow uses Google Cloud’s official or community-provided actions to authenticate with GCP and execute the deployment commands.
+1. Uses the ASIN to query BigQuery for relevant review texts and product info.
+2. Embeds the retrieved texts and builds a FAISS index in-memory to find similar content related to the question.
+3. Feeds the most relevant snippets into the LangChain QA chain along with the user's question. The chain (with a language model, e.g. via OpenAI or HuggingFace API) generates a contextual answer.
+4. Returns the answer as a JSON response to the client.
 
-- **Container Registry/Artifact Registry** – As part of deployment, the Docker image for the chatbot is stored in a registry. This could be Google Container Registry (GCR) or Artifact Registry. The CI pipeline builds the image and tags it (for example, with the Git commit or version), then pushes it to the registry. Cloud Run then pulls this image from the registry during deployment. The registry is Google-managed and requires proper authentication (handled by the CI workflow using GCP credentials).
-
-- **Cloud Logging and BigQuery (Monitoring)** – Cloud Run services automatically send logs to Google Cloud Logging by default ([Logging and viewing logs in Cloud Run  |  Cloud Run Documentation  |  Google Cloud](https://cloud.google.com/run/docs/logging#:~:text=Cloud%20Run%20has%20two%20types,automatically%20sent%20to%20Cloud%20Logging)). In this architecture, a Cloud Logging **sink** is configured to export relevant logs to **BigQuery** in near real-time. Two custom metrics are tracked via log entries:
-  - *Chatbot Started Count*: incremented/logged each time the chatbot application starts handling a new session or request (this could be for each new chat session or each invocation, depending on how it's instrumented).
-  - *Chatbot Error Count*: incremented/logged whenever an error or exception occurs in the chatbot (for example, failure to process a message).
-  
-  The log sink filters the Cloud Run logs to capture these events and stores them in a BigQuery table for analysis. By exporting logs to BigQuery, we can run SQL queries to count occurrences of these events over time ([View logs routed to BigQuery  |  Cloud Logging  |  Google Cloud](https://cloud.google.com/logging/docs/export/bigquery#:~:text=This%20document%20explains%20how%20you,also%20describes%20the%20%20213)). This serves as a lightweight monitoring solution for usage (how many chats were started) and reliability (how many errors happened). Optionally, these logs could also be used to set up alerts or dashboards (for instance, using Data Studio or Cloud Monitoring by linking BigQuery data), but the core idea is that the metrics are **logged** and **queried** rather than using a complex monitoring system. All other application logs (like debug info or general audit logs) also reside in Cloud Logging and can be viewed via the Logs Explorer in GCP, but only the key metrics are routed to BigQuery for custom analysis.
-
-**Note:** The architecture does not include a training or data pipeline because *no model training/retraining is involved*. The focus is on deploying the inference service (the chatbot) and monitoring its runtime behavior. All components (Cloud Run, Logging, BigQuery, etc.) are in the cloud, making the system highly available and maintainable with minimal on-premise requirements.
+Throughout this process, important events are logged (e.g., start of chat, no data found, answer generated, etc.), which are viewable in Cloud Logging. The entire architecture is serverless and scalable: BigQuery can handle large data queries, and Cloud Run scales out the container during high load. Development workflows are streamlined by the CI/CD pipeline, and monitoring is in place via logs and metrics.
 
 ## Deployment Instructions
 
-Deploying the SellerCentral-ChatBot-System involves setting up the cloud environment, configuring credentials, and either relying on the CI/CD pipeline or manually deploying. Below are step-by-step instructions for a successful deployment:
+This section walks through deploying the Seller Central Chatbot to Google Cloud. It covers setting up the GCP environment, building the Docker container, deploying to Cloud Run (manually and via CI), and testing the live service with `curl`. Before starting, make sure you have the following:
 
-1. **Prerequisites and Environment Setup**:  
-   - **Google Cloud Project**: Ensure you have access to a GCP project with billing enabled. Note the **Project ID** as it will be needed for deployment configuration. If you don't have a project, create one via the GCP Console. Also, enable the **Cloud Run API** and **BigQuery API** for this project (you can do this through the console or with `gcloud services enable run.googleapis.com bigquery.googleapis.com`).  
-   - **Google Cloud SDK (gcloud CLI)**: Install the Google Cloud SDK to get the `gcloud` command-line tool ([Google Cloud CLI documentation](https://cloud.google.com/sdk/docs#:~:text=Google%20Cloud%20CLI%20documentation%20Quickstart%3A,CLI%20%C2%B7%20Managing%20gcloud)). This tool will be used for local testing or manual deployment. You can install it from Google’s documentation (for example, on Ubuntu or Mac, download the installer or use a package manager). After installation, run `gcloud init` and `gcloud auth login` to authenticate and set the default project.  
-   - **Docker**: Install Docker on your local system if you plan to build or run the container image locally. Docker is required to build the container image that Cloud Run will execute. Verify that running `docker --version` works.  
-   - **Source Code**: Clone the repository for SellerCentral-ChatBot-System to your local machine:  
-     ```bash
-     git clone https://github.com/your-username/SellerCentral-ChatBot-System.git
-     cd SellerCentral-ChatBot-System
-     ```  
-     (Use the actual repository URL or path as appropriate). The repository should contain the application code, a Dockerfile, and configuration files including the GitHub Actions workflow.  
-   - **Configuration**: Review any configuration files or environment variable templates (for example, a `.env.example` file) in the repository. Prepare a `.env` file or set environment variables as needed (for instance, API keys or other secrets the chatbot might require to function). Common variables might include `PORT` (Cloud Run sets this automatically, usually 8080), or any model-specific settings. These should be documented in the repo. 
+- **GCP Project:** You have access to a Google Cloud project with billing enabled.
+- **Google Cloud SDK:** `gcloud` CLI is installed and authenticated (`gcloud auth login`) on your local machine.
+- **Project Setup:** Ensure the necessary GCP services are enabled: Cloud Run, BigQuery, Artifact Registry (for storing container images, or Container Registry), and Secret Manager (for managing secrets). Also create or identify a BigQuery dataset/table that contains the product reviews data required by the chatbot.
+- **Service Account:** Create a GCP Service Account (or use the default Compute service account) that the Cloud Run service will run as. Grant it permissions to BigQuery (e.g. **BigQuery Data Viewer** on the dataset or project) and Secret Manager **Secret Accessor** for the specific secrets you'll use.
+- **Application Secrets:** Obtain all required API keys and credentials:
+  - HuggingFace API token (`HF_TOKEN`) – for embedding model access.
+  - DeepSeek API key (`DEEPSEEK_API_KEY`) – if used for any external service.
+  - OpenAI API key (`OPENAI_API_KEY`) – if using OpenAI for answer generation.
+  - (Any other keys like `GROQ_API_KEY`, LangFuse keys if applicable.)
+  - Service account JSON for BigQuery access (only needed if not relying on GCP service account identity).
+  
+  Store these secrets securely. **If using Secret Manager (recommended):** create a secret for each (e.g., a secret named `HF_TOKEN` containing your HuggingFace token, and so on for each key, as well as a secret named `GOOGLE_APPLICATION_CREDENTIALS` containing the content of your service account JSON if you plan to use the JSON file). You can create secrets via the Cloud Console or using gcloud (for example: `echo -n "YOUR_HF_TOKEN_VALUE" | gcloud secrets create HF_TOKEN --data-file=-`).
 
-2. **Authentication and Permissions Setup**:  
-   Deploying to Cloud Run via GitHub Actions requires granting the pipeline access to your GCP project:
-   - **Service Account**: Create a GCP Service Account that will be used by GitHub Actions. For example, in the GCP Console or using the gcloud CLI, create a service account (e.g., name it `github-deployer`). Grant this service account the necessary IAM roles:
-     - *Cloud Run Admin* – allows deploying new revisions to Cloud Run.
-     - *Cloud Run Service Agent* – (if not included in admin) allows managing Cloud Run services.
-     - *Artifact Registry Writer* (or *Storage Object Admin* if using Container Registry) – allows pushing Docker images to your project's registry.
-     - *BigQuery Data Editor* (optional, only if your deployment process or monitoring needs to create tables or write to BigQuery; reading logs doesn't require this, as logging will handle BigQuery writes).
-     - *Service Account User* – if the GitHub Actions workflow will impersonate this service account, it might need this role on itself.
-   - **Generate Key**: For the service account, create a JSON key (in the IAM & Admin > Service Accounts section, select your service account, and add a key). This will download a JSON credentials file. **Keep it secure** and do not commit it to your repo.
-   - **GitHub Secrets**: In your GitHub repository settings, add the necessary secrets so the Actions workflow can authenticate:
-     - `GCP_PROJECT_ID`: your Google Cloud project ID.
-     - `GCP_SA_KEY`: the content of the service account JSON key (you can copy-paste the JSON or encode it as base64 as required by your workflow).
-     - (Alternatively, you might use OpenID Connect Workload Identity Federation instead of a JSON key. In that case you'd configure `google-github-actions/auth@v2` with a workload identity provider. But using the JSON key is simpler to start with.)
-   - **Permissions Confirmation**: Locally, you can also authenticate with GCP to test permissions. Run: `gcloud auth activate-service-account --key-file path/to/key.json --project YOUR_PROJECT_ID` to impersonate the service account, then try a dry-run deployment command (see next step) to ensure permissions are correct.
+With the setup done, follow these steps to deploy:
 
-3. **Deployment via GitHub Actions**:  
-   The repository includes a GitHub Actions workflow (YAML file in `.github/workflows/`) that automates the build and deployment. You generally **do not need to run deployment scripts manually** – the CI/CD pipeline will do it on triggers. However, you should know how it works and how to trigger it:
-   - **Continuous Deployment Trigger**: Usually, the workflow is configured to run on certain events. Commonly, pushing a commit to the `main` branch or pushing a tagged release will start the pipeline. Check the YAML file (look for the `on:` section) to see if it's triggered on `push`, `pull_request`, or manual `workflow_dispatch`. To initiate a deployment, you can push a new commit (for example, after making a small change or bumping a version). If the pipeline is set up for manual triggers, go to the Actions tab in GitHub, select the workflow, and manually trigger a run.
-   - **Build and Deploy Steps**: The GitHub Actions workflow will perform roughly the following steps:
-     1. **Checkout Code** – pulls the latest code from the repository.
-     2. **Authenticate to GCP** – uses the provided service account credentials to authenticate (`google-github-actions/auth` action or `gcloud auth activate-service-account` in a step). This grants the workflow permission to use gcloud and push images.
-     3. **Build Container Image** – calls Docker to build the image from the Dockerfile. For example, it might run `docker build -t gcr.io/$PROJECT_ID/sellercentral-chatbot:$GITHUB_SHA .` to tag the image with the commit SHA. If using Google Artifact Registry, the image name will use your region’s repository URL (e.g., `REGION-docker.pkg.dev/PROJECT_ID/REPO_NAME/image:tag`).
-     4. **Push Image to Registry** – after a successful build, the workflow pushes the image to the registry using Docker push. The credentials set up earlier allow this push to succeed.
-     5. **Deploy to Cloud Run** – finally, the workflow deploys the new image to Cloud Run. This is done with a command such as `gcloud run deploy sellercentral-chatbot-service --image gcr.io/PROJECT_ID/image:tag --region REGION --platform managed --allow-unauthenticated` (the exact command flags might vary). The service name on Cloud Run is specified (e.g., `sellercentral-chatbot-service`), along with the image and region. The `--allow-unauthenticated` flag ensures the service is publicly reachable (no auth required). Other parameters like memory/CPU allocation, scaling limits, or environment variables might also be set in this command or via a Cloud Run service YAML definition if used.  
-     
-     The GitHub Actions log will show each step and whether it succeeded. If all goes well, the Cloud Run deployment step will output the URL of the service (or you can retrieve it from the Cloud Run console). The pipeline effectively containerizes the application and updates the live service in an automated fashion, aligning with best practices for CI/CD in cloud deployments ([From Code to Cloud: GitHub Actions for Cloud Run Deployment | by Azeez | Medium](https://azeezz.medium.com/from-code-to-cloud-github-actions-for-cloud-run-deployment-dc1304573642#:~:text=Github%20Actions%20is%20a%20continuous,with%20a%20Service%20Account%20Key)) ([From Code to Cloud: GitHub Actions for Cloud Run Deployment | by Azeez | Medium](https://azeezz.medium.com/from-code-to-cloud-github-actions-for-cloud-run-deployment-dc1304573642#:~:text=machine%20,on%20the%20cloud%20run%20service)).
-   - **Manual Deployment Option**: In some cases, you might want to deploy manually (for example, for initial setup or debugging). If you have the gcloud CLI set up locally and Docker image built, you can deploy with one command using gcloud:
-     ```bash
-     # Build the image (if not already built by CI)
-     docker build -t gcr.io/<YOUR_PROJECT_ID>/sellercentral-chatbot:latest .
-     docker push gcr.io/<YOUR_PROJECT_ID>/sellercentral-chatbot:latest
-     # Deploy to Cloud Run:
-     gcloud run deploy sellercentral-chatbot-service \
-       --image gcr.io/<YOUR_PROJECT_ID>/sellercentral-chatbot:latest \
-       --platform managed --region us-central1 \
-       --allow-unauthenticated
-     ```  
-     Ensure you replace `<YOUR_PROJECT_ID>` with your GCP project ID, and adjust the service name, region, and image tag as needed. After running this, gcloud will output the service URL. In most cases though, the GitHub Actions workflow handles these steps, so manual deployment is only needed if bypassing CI or for quick experiments.
+**1. Build the Docker Container Image**  
+The repository includes a `Dockerfile` that defines the container environment. It is based on **Python 3.9 slim**, installs the Python dependencies from `requirements.txt`, and sets the entrypoint to Uvicorn serving the FastAPI app on port 8080 (see the `CMD ["uvicorn", "src.main:app", ...]` in the Dockerfile). You can build the image locally and push to Google Container Registry (GCR) or Artifact Registry:
 
-4. **Verifying the Deployment**:  
-   Once the GitHub Actions workflow completes (or your manual `gcloud run deploy` finishes), you should verify that the chatbot service is up and running on Cloud Run:
-   - **Find Service URL**: The Cloud Run service will have a unique URL. It typically looks like `https://<SERVICE_NAME>-<RANDOM_HASH>-<REGION>.a.run.app`. You can find this URL in the deployment output or by going to the Cloud Run section of the GCP Console and clicking on the service name, where the URL will be listed. 
-   - **Health Check**: The chatbot system might have a health-check endpoint (for example, `/health` or `/`) that returns a simple success message. Try accessing it in a web browser or via curl. For instance:  
-     ```bash
-     curl -X GET https://sellercentral-chatbot-service-xxxxxxxx-uc.a.run.app/health
-     ```  
-     If there's no dedicated health path, you can curl the root URL (`/`). A successful response (HTTP 200) or a welcome message like "SellerCentral ChatBot is running" indicates the service is deployed.  
-   - **Chatbot Query Test**: To truly test functionality, you might have an endpoint like `/chat` or `/query` where you send a chat message and get a response. For example, if the API expects a JSON payload with a user query, you could do:  
-     ```bash
-     curl -X POST https://sellercentral-chatbot-service-xxxxxxxx-uc.a.run.app/chat \
-          -H "Content-Type: application/json" \
-          -d '{ "question": "Hello, what can you do?" }'
-     ```  
-     This should return a JSON response from the chatbot (for example, an answer or greeting). The exact request format depends on how the chatbot API is designed in the code. Check the project documentation or code (perhaps in a README or the source) for the correct endpoint and JSON format.  
-   - **Unauthenticated Access**: If you get an HTTP 403 Forbidden, it might mean the service is **not** open to public. In that case, you’d need to obtain an identity token and include it in the curl request’s Authorization header, or adjust the Cloud Run service to allow unauthenticated invocations. (Ensuring `--allow-unauthenticated` at deploy time, as we did above, prevents this issue in a public demo setting.)  
-   - **Check Logs**: As a final verification, go to the Cloud Run service in the GCP Console and click on **Logs**. You should see entries for the request you just made (Cloud Run provides request logs, and your application might log details as well). This confirms that the system not only deployed but is actively handling requests.
+- *Option A: Use Google Cloud Build (gcloud)* – This is the simplest method if you have the gcloud CLI:
+  ```bash
+  # from the root of the repository:
+  gcloud config set project YOUR_GCP_PROJECT_ID
+  gcloud builds submit --tag gcr.io/YOUR_GCP_PROJECT_ID/sellerchatbot:latest .
+  ```
+  This command will upload your code to Google Cloud and build it on GCP's infrastructure, then store the image in the GCR registry (`sellerchatbot` is an example image name; you can choose another name).
 
-By following these steps, you will have the SellerCentral-ChatBot-System deployed on Cloud Run and confirmed that it's functional. Future updates can be deployed simply by pushing changes to the repository (triggering the CI/CD workflow again), making the process of maintaining the chatbot very convenient.
+- *Option B: Build and push with Docker manually* – Ensure Docker is running locally, then:
+  ```bash
+  docker build -t gcr.io/YOUR_GCP_PROJECT_ID/sellerchatbot:latest .
+  docker push gcr.io/YOUR_GCP_PROJECT_ID/sellerchatbot:latest
+  ```
+  This will build the image locally and push it to your GCP project's container registry. (You might need to run `gcloud auth configure-docker` once to allow Docker to push to gcr.io.)
 
-## CI/CD Pipeline
+**2. Deploy to Cloud Run (Manual via gcloud)**  
+Once the container image is available in the registry, deploy it to Cloud Run:
+```bash
+gcloud run deploy sellerchatbot-api \
+  --image gcr.io/YOUR_GCP_PROJECT_ID/sellerchatbot:latest \
+  --platform managed --region us-central1 \
+  --allow-unauthenticated \
+  --service-account YOUR_SERVICE_ACCOUNT_EMAIL \
+  --memory 4Gi --timeout 300s \
+  --update-secrets "HF_TOKEN=HF_TOKEN:latest,DEEPSEEK_API_KEY=DEEPSEEK_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GOOGLE_APPLICATION_CREDENTIALS=GOOGLE_APPLICATION_CREDENTIALS:latest"
+```
+In the above command:
+  - `sellerchatbot-api` is the name of the Cloud Run service (you can name it differently).
+  - `--platform managed --region us-central1` deploys to the specified region on the fully managed Cloud Run.
+  - `--allow-unauthenticated` makes the service publicly accessible (no auth token needed to invoke).
+  - `--service-account` sets the service to run as the service account we configured (replace `YOUR_SERVICE_ACCOUNT_EMAIL` with the email of the SA). This account's permissions will be used to access BigQuery and secrets.
+  - `--update-secrets` attaches the secrets from Secret Manager as environment variables in the container. For example, `HF_TOKEN=HF_TOKEN:latest` means it will fetch the latest version of the Secret Manager secret named "HF_TOKEN" and set an env var `HF_TOKEN` with that value inside the container. Similarly for the other secrets including `GOOGLE_APPLICATION_CREDENTIALS` (which would provide the JSON credentials if needed). If you are using the service account identity for BigQuery, the `GOOGLE_APPLICATION_CREDENTIALS` secret may not be strictly required – Google’s ADC (Application Default Credentials) will use the service account's identity automatically. However, if your code explicitly expects a JSON key, providing it via secret ensures compatibility.
 
-The continuous integration/continuous delivery pipeline is implemented with **GitHub Actions**, enabling automated builds, tests, and deployment on every code change. Here’s an overview of the CI/CD setup and how it works:
+   *Note:* The memory (4Gi) and timeout (300s) settings can be adjusted based on the needs of the model (e.g., if embedding or QA chain is heavy). Ensure your Cloud Run service account has access to the specified secrets (Secret Manager will enforce IAM).
 
-- **Workflow Configuration**: The repository contains a workflow file (e.g., `.github/workflows/deploy.yml`) that defines the CI/CD process. This YAML file specifies triggers and a series of jobs/steps. For this project, the workflow is triggered on updates to the main branch (for example, on every push to `main` or when a pull request is merged). It may also allow manual triggers for deployment via the GitHub Actions interface if configured with `workflow_dispatch`. The trigger configuration ensures that the latest code is automatically deployed, achieving true continuous delivery.
+After running the deploy, Cloud Run will output the service URL (something like `https://sellerchatbot-api-<randomhash>-uc.a.run.app`). You can also retrieve the URL with:
+```bash
+gcloud run services describe sellerchatbot-api --region us-central1 --format "value(status.url)"
+```
 
-- **Build and Test Stages**: Once triggered, the workflow runs on a GitHub-provided runner (Ubuntu VM by default). Typical stages in the job include:
-  - *Checkout Code*: Uses `actions/checkout@v4` to pull the repository code onto the runner.
-  - *Set up Cloud SDK*: Uses the Google Cloud action `google-github-actions/setup-gcloud` to install the gcloud CLI and authenticate. The service account credentials (from the `GCP_SA_KEY` secret) are used here to log in to GCP within the runner environment. After this, `gcloud` commands and other Google Cloud tools can be used.
-  - *Build Docker Image*: The workflow builds the Docker image for the chatbot. It might do this with a Docker action or simply by running `docker build` in a script step. This compiles the application and packages it into a container image. If there are tests, this stage could also run unit tests (e.g., if using a Python app, maybe running `pytest` before building or as part of the build).
-  - *Push to Registry*: After building, it logs in to Google’s container registry (using stored credentials or the gcloud auth) and pushes the image. The image tag might be `latest` or based on the commit SHA or a version number.
-  - *Deploy to Cloud Run*: Finally, the workflow calls `gcloud run deploy` (or uses the `google-github-actions/deploy-cloudrun` action) to update the Cloud Run service with the new image. This step will replace the existing service revision with a new one carrying the updated code. By the end of this step, Cloud Run will serve the new version of the chatbot. The output of this action is often the service URL and confirmation of a successful deployment.
+**3. Set Up GitHub Actions for CI/CD (Optional)**  
+Instead of manual builds and deploys, you can rely on the included GitHub Actions workflow to automate this process on every code push. The repo’s workflow file is located at [`.github/workflows/ci.yml`](.github/workflows/ci.yml), and it already contains the steps to authenticate to Google Cloud, build the Docker image, push it, and deploy to Cloud Run (mirroring the manual steps above). To use this:
 
-- **Continuous Deployment Behavior**: Thanks to this pipeline, developers do not need to manually intervene for deploying changes. For example, if a developer fixes a bug or adds a new feature to the chatbot and pushes a commit, within a few minutes the GitHub Actions workflow will build and release that change to Cloud Run. This reduces deployment friction and errors since the process is scripted and consistent. It also encourages frequent, incremental updates. If a build or deploy fails (due to a code issue or infrastructure problem), the GitHub Actions UI will show a failure, and the team can address it before it affects the production service.
+   - Go to your GitHub repository Settings -> Secrets (or Settings -> Actions -> Secrets and variables -> Repository secrets) and add a secret named `GOOGLE_APPLICATION_CREDENTIALS`. The value should be the **JSON content** of the Google Cloud service account key (that has permissions to deploy to Cloud Run). This is used by the workflow to authenticate (`google-github-actions/auth@v1`).
+   - Open the `ci.yml` file and update the environment variables under `env:` if needed:
+     - `PROJECT_ID` should be your GCP project ID.
+     - `SERVICE` should be your desired Cloud Run service name (e.g., "sellerchatbot-api").
+     - `REGION` should match where you want to deploy (e.g., "us-central1").
+   - Ensure the Secret Manager on GCP has all the runtime secrets as discussed. The workflow uses `gcloud run deploy --set-secrets` just like the manual step, so it expects those secrets to exist in GCP. (If you prefer not to use Secret Manager, you'd have to modify the deploy command to use `--update-env-vars` with values stored in GitHub Secrets — not covered here for brevity and security considerations.)
+   - Commit and push your changes. The GitHub Actions pipeline will trigger on push to the **main** branch by default (as specified by `on: push` to main in the workflow). You can monitor the progress in the Actions tab of your GitHub repo. If configured correctly, you should see steps for checkout, Google Cloud auth, Docker build/push, and Cloud Run deploy. A successful run means your new code is live on Cloud Run.
 
-- **Security and Credentials**: The CI/CD setup keeps sensitive information (like GCP credentials) in GitHub Secrets, not in the code. Only the GitHub Actions runner can access these secrets during a run. This protects the GCP account from unauthorized access. Additionally, using least-privilege principles for the service account (only giving it deploy permissions) ensures the CI/CD pipeline cannot perform unintended operations.
+Using the CI/CD pipeline ensures that any update to your code repository will automatically roll out to the Cloud Run service, providing a robust continuous deployment mechanism.
 
-- **Rollback Strategy**: Although not explicitly part of the question, it’s worth noting: Cloud Run retains previous revisions of the service. In case a deployment has issues, one can quickly roll back to the last known good revision via the Cloud Run console or CLI. The CI pipeline could also be configured to only deploy on passing tests or incorporate manual approval for production, depending on how critical the application is. However, for this chatbot, we assume fully automated deployments for speed.
+**4. Test the Deployed Service (API)**  
+After deployment, you should verify that the chatbot API is working. You can use `curl` from the command line to send a test request to the `/chat/` endpoint. The endpoint expects a POST request with a JSON body containing an `asin` (Amazon product ID) and a `question`. For example:
 
-In summary, the CI/CD pipeline uses GitHub Actions to seamlessly integrate code changes with deployment. This follows industry best practices for DevOps, where code commits trigger builds and deployments in a reproducible manner ([From Code to Cloud: GitHub Actions for Cloud Run Deployment | by Azeez | Medium](https://azeezz.medium.com/from-code-to-cloud-github-actions-for-cloud-run-deployment-dc1304573642#:~:text=Github%20Actions%20is%20a%20continuous,with%20a%20Service%20Account%20Key)). The result is that maintaining and updating the SellerCentral-ChatBot-System is efficient and reliable, with minimal downtime and human error.
+```bash
+# Replace <CLOUD_RUN_URL> with your service URL from the deploy step
+curl -X POST "<CLOUD_RUN_URL>/chat/" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "asin": "B0EXAMPLEASIN", 
+        "question": "What do customers say about the battery life?"
+      }'
+```
 
-## Monitoring and Logging
+If everything is set up correctly, the service will fetch the reviews for the product `B0EXAMPLEASIN` from BigQuery, run the QA chain, and return a JSON response with an answer. A typical successful response looks like:
 
-Monitoring the chatbot’s performance and usage is crucial for ensuring reliability. In this project, we implement monitoring primarily through logging. The approach is to log key events from the application and then use those logs to derive metrics. Here's how it works and how you can utilize it:
+```json
+{
+  "asin": "B0EXAMPLEASIN",
+  "question": "What do customers say about the battery life?",
+  "answer": "Many customers mention that the battery life lasts around 10 hours on a single charge, which they find satisfactory for daily use."
+}
+```
 
-- **Cloud Run Logging**: Out of the box, Cloud Run streams all logs from the application to **Google Cloud Logging** (formerly Stackdriver Logging). This includes two types of logs: **request logs** (each HTTP request has an entry with response code, latency, etc.) and **application logs** (any `stdout` or `stderr` output from the app) ([Logging and viewing logs in Cloud Run  |  Cloud Run Documentation  |  Google Cloud](https://cloud.google.com/run/docs/logging#:~:text=Cloud%20Run%20has%20two%20types,automatically%20sent%20to%20Cloud%20Logging)). Our chatbot application is instrumented to log specific events:
-  - When the chatbot starts handling a new chat session or question, it logs a message like “Chatbot session started” (with perhaps a timestamp or session ID).
-  - If an error or exception occurs (for example, if the model fails to generate a response or an internal error happens), the code logs an error message like “Chatbot error: <error details>”.
-  - (Optionally, we could log other info such as the user’s question or the response time, but the key metrics of interest are start counts and error counts.)
+(The exact answer will depend on the content of your BigQuery reviews for that ASIN and the behavior of the language model. If the ASIN is not found in the database, you should get an appropriate message like "No review data found for the provided ASIN." as defined in the code.)
 
-- **Log-based Metrics in BigQuery**: Instead of using Cloud Monitoring’s custom metrics, we opted to export logs to **BigQuery** for analysis. A logging **sink** is configured in Cloud Logging that matches our chatbot’s logs and routes them to a BigQuery dataset. This means that every time a log entry is written (e.g., "Chatbot session started"), it is also appended as a row in a BigQuery table. Google’s logging service streams the data in small batches efficiently ([View logs routed to BigQuery  |  Cloud Logging  |  Google Cloud](https://cloud.google.com/logging/docs/export/bigquery#:~:text=This%20document%20explains%20how%20you,also%20describes%20the%20%20213)). In BigQuery, the logs can be queried using SQL, which provides a flexible way to calculate metrics over any time period:
-  - **Chatbot Started Count**: You can count the number of "start" logs to see how many times the chatbot was invoked. For example, a simple BigQuery SQL query might be:  
-    ```sql
-    SELECT DATE(timestamp) as date, COUNT(*) as sessions
-    FROM `your_project.logging_dataset.chatbot_logs`
-    WHERE textPayload CONTAINS "Chatbot session started"
-    GROUP BY date
-    ORDER BY date;
-    ```  
-    This would give you daily counts of chatbot sessions started. (The exact field names like `textPayload` or schema depends on how the logs are structured in BigQuery, but generally the message appears in one of the payload fields).
-  - **Chatbot Error Count**: Similarly, you can count error logs. For example:  
-    ```sql
-    SELECT DATE(timestamp) as date, COUNT(*) as errors
-    FROM `your_project.logging_dataset.chatbot_logs`
-    WHERE textPayload CONTAINS "Chatbot error"
-    GROUP BY date
-    ORDER BY date;
-    ```  
-    This yields the number of errors logged each day. If you join or compare the two metrics, you can calculate an error rate (errors per session) as well.
+> **Tip:** You can also test the service from the GCP Console. In Cloud Run, click on your service and use the "Testing" tab to send a JSON request. Alternatively, tools like Postman or HTTPie can be used for testing the REST endpoint.
 
-- **Viewing Logs and Metrics**: To inspect logs directly, you have a few options:
-  - Use the **Cloud Run Logs** tab in the Google Cloud Console (navigate to Cloud Run service, then Logs). This is handy for recent logs or debugging specific issues.
-  - Use **Cloud Logging Logs Explorer** for advanced filtering (you can filter by severity, or search for the text "Chatbot error" etc., across all logs).
-  - Use **BigQuery**: go to the BigQuery console, find the dataset (for example, it might be named `chatbot_logs` or part of a logging dataset with your project ID), and you can query it or even just preview the table. BigQuery is particularly useful for aggregating metrics over time as shown in the examples above. Since the logs are stored in BigQuery, you could also connect a dashboard tool (e.g., Google Data Studio/Looker Studio) to visualize these metrics over time, if desired.
+## CI/CD Pipeline with GitHub Actions
 
-- **Alerting (Optional)**: While not explicitly set up in this project, you could create alerts in Cloud Monitoring based on these metrics. For instance, a **logs-based metric** could be defined in Cloud Monitoring to count "Chatbot error" occurrences and trigger an alert if the count exceeds a threshold in a given period. Alternatively, since data is in BigQuery, one could schedule a query or use an external script to monitor and send notifications. Given the scope of this project, we focus on manual monitoring via queries rather than automated alerts.
+The project implements a Continuous Integration/Continuous Deployment pipeline using **GitHub Actions**. The workflow file [`ci.yml`](.github/workflows/ci.yml) encapsulates the build and deploy steps required to keep the Cloud Run service up to date. Here is an overview of the CI/CD pipeline:
 
-- **BigQuery Cost Consideration**: Exporting logs to BigQuery has cost implications (storage and query costs). However, for a moderate volume of logs (e.g., a chatbot with light usage), the cost is minimal. Logs in BigQuery allow long-term retention and complex analysis which Cloud Logging alone might limit (Cloud Logging also has retention limits depending on settings). It's a trade-off for the educational scenario to demonstrate custom monitoring. In a real production scenario, one might use Cloud Monitoring dashboards or export logs to a more purpose-built monitoring system if needed.
+- **Trigger:** The workflow is configured to run on every push to the `main` branch (and can be extended to pull requests or other triggers as needed). This means that as soon as you push new code or merge a pull request into main, the deployment process will kick off automatically ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=on%3A)).
+- **Checkout and Setup:** The first steps have the runner check out the repository code ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=steps%3A)). Then, it authenticates to Google Cloud using the service account credentials stored in the `GOOGLE_APPLICATION_CREDENTIALS` secret ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=,key%20stored%20in%20GitHub%20Secrets)). It also sets up the gcloud SDK on the runner with the target project and installs the necessary components (like `gcloud` and Docker support) ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=,Cloud%20SDK)).
+- **Docker Build and Push:** The workflow uses Docker to build the image from the repository. It tags the image as `gcr.io/PROJECT_ID/SERVICE_NAME:$GITHUB_SHA` (using the commit SHA as the image tag for traceability) ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)). After a successful build, it pushes the image to Google Container Registry ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)). Using the commit SHA ensures each deployment is uniquely identifiable and allows easy rollback to specific versions if needed.
+- **Deploy to Cloud Run:** Once the image is pushed, the workflow deploys it to Cloud Run in the specified region ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=,Run)). The deploy command is equivalent to what was shown in the manual instructions:
+  - It specifies the service name and image URL with tag ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=run%3A%20)).
+  - It passes the same flags for platform, region, and unauthenticated access ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=gcloud%20run%20deploy%20%24,)).
+  - It allocates adequate memory and timeout for the container ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)).
+  - It sets the service account to run as (the one we configured with proper IAM roles) ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)).
+  - It injects all the required secrets from Secret Manager into the service's environment ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)) ([SellerCenteral-ChatBot-System/.github/workflows/ci.yml at main · aichatbot07/SellerCenteral-ChatBot-System · GitHub](https://github.com/aichatbot07/SellerCenteral-ChatBot-System/blob/main/.github/workflows/ci.yml#:~:text=)). This includes API keys and the credentials JSON if needed. (The secrets must already exist in Secret Manager; the workflow does not create them but just references them.)
+- **Result:** Cloud Run rolls out the new revision of the service with the updated image. The workflow will complete with a success status if everything went smoothly. In the Cloud Run console, you will see a new revision corresponding to the deployment. The GitHub Actions run log will show each step's output or any errors if they occurred.
 
-By reviewing the BigQuery logs, one can determine how frequently the chatbot is used and how stable it is (via error counts). For instance, if the "chatbot started" count suddenly drops to zero on a given day, it might indicate an outage or deployment issue. If the "error count" spikes, it signals something is wrong in responses or system performance. This logging-based monitoring provides a feedback loop to improve the chatbot system over time.
+By using this CI/CD pipeline, developers do not have to manually build or deploy the application each time. It reduces human error and ensures that the **source of truth** (the Git repository) is directly tied to the deployed application state. For example, when you update the chatbot's logic or fix a bug, you simply push the changes to GitHub; the pipeline will test (if tests were added, you could extend the workflow to run `pytest` before building), build the container, and update the Cloud Run service.
+
+**Setting up the CI/CD** (if you fork or replicate this repository):
+- Remember to add the `GOOGLE_APPLICATION_CREDENTIALS` secret in your GitHub repo (with your service account JSON).
+- Adjust `PROJECT_ID`, `SERVICE`, and `REGION` in the workflow file to match your environment.
+- Make sure the service account used has the IAM roles: **Cloud Run Admin**, **Cloud Build Service Account** (if using Cloud Build), **Storage Admin** (to push to GCR), and possibly **Secret Manager Admin/Accessor** for reading secrets. An easy approach is to grant the service account the pre-defined **Cloud Run Developer** role and additionally **Secret Manager Secret Accessor** on the specific secrets.
+- (Optional) Add any additional steps you need, such as running tests or notifications on failure, to the workflow.
+
+Once configured, try making a small commit to trigger the workflow and watch the Actions console for the deployment logs. Upon success, your Cloud Run service will have the latest code. This continuous deployment approach is essential for agile iteration and is a key part of the **MLOps** and DevOps best practices demonstrated by this project.
+
+## Monitoring and Logging via Cloud Logging + BigQuery
+
+Monitoring the deployed chatbot is crucial to ensure it is performing well and to troubleshoot issues. This project takes advantage of GCP’s logging and monitoring services:
+
+- **Cloud Logging (Stackdriver):** All logs from the application running on Cloud Run are automatically sent to Google Cloud Logging. This includes HTTP request logs (with details like HTTP status, latency, etc.) as well as any application logs we produce. In our code, we've set up logging to output JSON-formatted logs for key events (using Python's logging and `logger.info/json.dumps` in the chatbot code). For example, when a chat request starts, we log an event `"chat_started"` with the ASIN and question, and when an answer is generated, we log `"response_generated"` with the content of the answer. These logs can be viewed in the Cloud Console under Logging > Logs Explorer. You can filter by resource type "Cloud Run Revision" and your service name to see only logs from your chatbot service. Each log entry will show the payload we logged as well as metadata (like timestamp, severity, trace ID for request correlation, etc.).
+
+- **Cloud Monitoring:** Cloud Run automatically records metrics such as the number of requests, request latency, CPU/memory utilization, etc. You can view basic metrics by clicking on your service in the Cloud Run console – it shows request count, error rate, and latency distributions. For more advanced monitoring, you can use Cloud Monitoring (Stackdriver) to create custom dashboards or alerts. For instance, you could set up an alert if the error rate (HTTP 5xx responses) exceeds a certain threshold, which could indicate the model or BigQuery queries are failing.
+
+- **BigQuery for Analytics:** While Cloud Logging is great for real-time log inspection, **BigQuery** can be used to perform deeper analysis on logs or application data over time. There are a couple of ways BigQuery comes into play:
+  - *BigQuery as the data source:* (This is the primary use in our chatbot logic.) The content the model uses to answer questions comes from BigQuery. Monitoring data freshness or the volume of data in BigQuery can be done with BigQuery's own console or by queries. For example, you might periodically run a BigQuery COUNT query on the reviews table to ensure new data is being added (if an ongoing pipeline feeds it).
+  - *Exporting logs to BigQuery:* We can create a logs sink that continuously exports Cloud Run logs to a BigQuery table. This is optional, but very powerful. By doing this, all those JSON log events (questions asked, answers given, etc.) can accumulate in BigQuery. You can then write SQL queries to analyze them: e.g., to find the most common questions, to track the frequency of certain errors, or to analyze average answer length over time. To set this up, you'd go to Logging > Logs Router, create a sink with a filter for your Cloud Run logs, and choose BigQuery as the destination. Once logs are in BigQuery, the data science team could even use it for further analysis or to feed back into model improvement (e.g., identifying unanswered questions or potential new training data).
+  - *Storing model evaluation results:* The project includes an offline evaluation module (under `model_evaluation/`). As you evaluate the model responses (for example, computing BLEU scores comparing the bot's answer to a reference), you might store those results in BigQuery as well, to track performance across model versions. This isn't implemented by default, but the infrastructure is in place: you could have a BigQuery table for evaluation metrics and insert a new row each time you run an evaluation script on a new model or new data. Over time, this becomes a valuable record of model performance.
+
+- **Error Tracking:** The FastAPI app will return HTTP 500 errors for exceptions. These will show up in Cloud Run logs and increase the error count metric. Our code logs the exception detail (`chatbot_error` events with stack trace) which helps debugging. Cloud Logging can be configured to trigger alerts on certain log patterns (for example, any `ERROR` level log or the presence of `"chatbot_error"` event can send an email alert).
+
+- **Inspecting BigQuery usage:** Since the chatbot executes queries on BigQuery for each request (to fetch reviews by ASIN), you can monitor BigQuery for query count or bytes scanned. In the BigQuery console, under Admin > Query history or Metrics, you can see how each query performed. Each query by the chatbot will use the service account's identity, so you can identify them. For cost monitoring, ensure the queries are optimized (e.g., the BigQuery SQL in `Data/fetch_reviews.py` should select only needed columns and use appropriate filtering by ASIN, which is likely indexed by partitioning or clustering on that field if the table is large).
+
+Overall, the combination of Cloud Run’s logging and monitoring and BigQuery’s analytic capabilities gives a comprehensive view of the system in production. In practice, after deployment you should:
+
+- Use **Logs Explorer** to tail the logs as you send test queries (this will show you the timeline of events for each query, e.g., you'll see a `chat_started` log followed by `retriever_ready` and `response_generated`).
+- Check Cloud Run’s metrics after some usage to see if the scaling behavior and latency are within expectations.
+- If needed, set up a BigQuery logs sink to analyze usage patterns over a longer period or to create an interactive dashboard of questions asked and answered by the bot.
+
+By regularly monitoring these logs and metrics, you can ensure the chatbot remains reliable and you can quickly react to any issues (like if BigQuery credentials expired, or an API key is invalid, you'd see errors in logs). It also provides insight into how users are interacting with the chatbot, which is valuable for future improvements.
 
 ## Local Development and Testing
 
-For development purposes or to run the chatbot locally (outside of Cloud Run), you have a couple of options. This allows you to test changes quickly before pushing to the cloud, or to debug issues in a local environment.
+For development and testing purposes, you may want to run the chatbot system locally. This allows you to debug issues and run the pipeline without deploying to the cloud each time. Below are instructions for setting up a local dev environment and running tests:
 
-- **Running Locally with Docker**: The easiest way to mirror the Cloud Run environment is to use Docker on your development machine.
-  1. Ensure you have Docker installed and the code cloned locally (as described in the Deployment Instructions section).
-  2. Build the Docker image locally:  
-     ```bash
-     docker build -t sellercentral-chatbot:dev .
-     ```  
-     This will execute the Dockerfile and produce an image named `sellercentral-chatbot:dev` on your machine.
-  3. Run a container from the image:  
-     ```bash
-     docker run -p 8080:8080 --env PORT=8080 sellercentral-chatbot:dev
-     ```  
-     We map port 8080 of the container to port 8080 of the host. Cloud Run by default will send requests to whatever port is defined in the `$PORT` environment variable (often 8080), so we ensure it's set. If your application expects any other environment variables (for example, API keys or configuration flags), supply them with `--env KEY=value` or by using an `--env-file` pointing to a local `.env` file. For instance, if the chatbot needs `OPENAI_API_KEY` to call an external API, you'd run `docker run -p 8080:8080 -e OPENAI_API_KEY=XYZ sellercentral-chatbot:dev`.
-  4. Once the container is running, test it by sending requests from your host machine:  
-     ```bash
-     curl http://localhost:8080/health
-     ```  
-     (or the appropriate path, similar to how you would for the deployed version). You should see similar responses locally as you would from the Cloud Run deployment. Logs will print to your terminal where Docker is running, which is useful for debugging. Stop the container with Ctrl+C when done.
+**1. Setting up the environment:**  
+Clone the repository to your local machine:
+```bash
+git clone https://github.com/aichatbot07/SellerCenteral-ChatBot-System.git
+cd SellerCenteral-ChatBot-System
+```
+Ensure you have **Python 3.9+** installed. It's recommended to use a virtual environment:
+```bash
+python3 -m venv venv
+source venv/bin/activate  # (On Windows: venv\Scripts\activate)
+```
+Install the required Python packages:
+```bash
+pip install -r requirements.txt
+```
+This will install FastAPI, Uvicorn, google-cloud-bigquery, langchain, faiss-cpu, and other dependencies.
 
-- **Running Locally without Docker**: Depending on how the project is structured, you might run the application directly on your host (e.g., via Python or Node). For example, if it's a Python Flask app, you might do `pip install -r requirements.txt` and then `flask run` or `python app.py`. Check the project documentation for a local run script or instructions (some projects have a `make run` or `npm start` command). Keep in mind, replicating the environment exactly might require installing additional system packages or dependencies that the Dockerfile would normally handle. Using Docker as above sidesteps these issues by using the same container environment as production.
+**2. Configuration:**  
+For local testing, you'll need access to BigQuery and the various API keys just like in production. The simplest approach is to set environment variables on your machine for all the keys (HF_TOKEN, OPENAI_API_KEY, etc.). You can do this by creating a `.env` file or exporting variables in your shell. Also, you need to authenticate to Google Cloud for BigQuery access:
+- Obtain your Google Cloud service account JSON key (the same one used in deployment, or any account with BigQuery read access).
+- Set the environment variable to point to it:
+  ```bash
+  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account.json"
+  ```
+  This will allow the BigQuery client to find the credentials. Alternatively, use `gcloud auth application-default login` to use your own account for BigQuery access in dev (not recommended for production, but fine for a quick test).
 
-- **Testing Changes**: When developing, it's good practice to write unit tests or integration tests for your chatbot logic. If the repository includes tests, you can run them locally (e.g., with `pytest` or `npm test`). This helps ensure your changes haven't broken existing functionality. You can also simulate requests to the chatbot by crafting example JSON inputs and seeing if the responses are as expected.
-  
-- **Environment Variables and Config**: The chatbot likely uses environment variables for configuration (for example, credentials or settings). In Cloud Run, you can set these in the service configuration (via the deploy command or the Cloud Console). Locally, you should define them too. For local Docker runs, as mentioned, use `--env` flags or a `.env` file. For direct local runs, you might export variables in your shell or use a tool like `direnv`. Always be careful not to hardcode sensitive information in code; use configs so that you can keep them out of version control.
+**3. Running the API server locally:**  
+You can start the FastAPI server (Uvicorn) locally to test the chatbot:
+```bash
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8080
+```
+The `--reload` flag makes the server auto-restart on code changes (useful during development). Once it’s running, open a browser or use curl to test:
+```
+curl -X POST "http://localhost:8080/chat/" \
+  -H "Content-Type: application/json" \
+  -d '{"asin": "B0TESTASIN", "question": "Sample question?"}'
+```
+If you have the BigQuery access configured properly and the ASIN exists in your data, you should get a JSON response from the local server. You can add print statements or use a debugger to step through the code in `src/chatbot_model.py` or other modules to inspect behavior.
 
-- **Connecting to Cloud Services Locally**: If your chatbot needs to access GCP services (perhaps BigQuery or Cloud Storage for some reason), you can either use local application default credentials (`gcloud auth application-default login` sets up credentials for local use) or service account keys. Alternatively, you might mock those parts during local testing if they are not essential to the chatbot’s core logic.
+**4. Running the Data Pipeline (optional):**  
+The repository contains a `Data_pipeline/` directory with scripts (and Airflow DAGs) that presumably take raw data (like JSONL files of reviews) and load them into BigQuery, perform preprocessing, bias detection, etc. If you want to regenerate or update the BigQuery data, you can run these scripts. For example:
+```bash
+python Data_pipeline/dags/fetch_data.py       # Fetch raw data (perhaps from an API or file)
+python Data_pipeline/dags/data_process.py     # Process/clean the raw data
+python Data_pipeline/dags/bias_detection.py   # (Optional) detect biases in data
+python Data_pipeline/dags/dataflow_processing.py  # Additional processing, maybe using Dataflow
+python Data_pipeline/dags/sellerId_check.py   # Validate or augment data with seller IDs
+python Data_pipeline/dags/mlops_airflow.py    # Integrate with Airflow (if using Airflow scheduler)
+```
+These are just the names of scripts; refer to the code/comments in those files for details on usage. If you have **Apache Airflow** installed, you can instead use the Airflow UI to run the pipeline as a DAG (there is an Airflow YAML in `.github/workflows/airflow_pipeline.yml` which might relate to running Airflow in CI). For local simplicity, direct Python execution or using DVC is sufficient:
+   - The project supports **DVC (Data Version Control)** for data tracking. If DVC is set up, you might pull sample data using `dvc pull` (if a remote is configured; check for `.dvc` files).
+   - Ensure any paths or project IDs inside these scripts match your setup (for example, the BigQuery dataset name).
 
-By following these local setup guidelines, you can iterate on the chatbot quickly. Once you're satisfied with local tests, commit and push your changes to let the CI/CD pipeline deploy them to Cloud Run. Always re-test the deployed version briefly (with curl or through its interface) to make sure everything runs in the cloud environment as it did locally.
+**5. Running Tests:**  
+Under the `tests/` directory, there may be unit tests for certain components (for instance, `tests/test_pipeline.py`). You can run the test suite with:
+```bash
+pytest tests/
+```
+Make sure you have any necessary test fixtures or environment variables set so that tests can run (the test code may be expecting a certain environment or sample data). The tests will help verify that individual pieces like the data pipeline or retrieval functions are working as expected.
+
+**6. Iterating locally:**  
+You can freely modify the code (for example, tweak the prompt for the LangChain QA chain, or try a different embedding model) and test it locally. Once satisfied, you can push changes to GitHub to trigger the CI/CD and deploy them.
