@@ -1,5 +1,3 @@
-Thanks! I’ll review your GitHub repo and existing README at https://github.com/aichatbot07/SellerCenteral-ChatBot-System.git, and generate a complete, submission-ready README file. It will include clear markdown formatting, code blocks, setup steps, curl examples, CI/CD details, and monitoring instructions—ready to paste into your repo.
-
 # Seller Central AI Chatbot System (Model Deployment)
 
 ## Project Overview
